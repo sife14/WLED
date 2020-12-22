@@ -15,6 +15,7 @@
 #endif
 
 //#include "usermod_v2_empty.h"
+#include "usermod_touchbrightness.h"
 
 #ifdef USERMOD_BUZZER
 #include "../usermods/buzzer/usermod_v2_buzzer.h"
@@ -53,7 +54,7 @@ void registerUsermods()
    * \/ \/ \/
    */
   //usermods.add(new MyExampleUsermod());
-  
+  usermods.add(new TouchBrightnessControl());
   #ifdef USERMOD_DALLASTEMPERATURE
   usermods.add(new UsermodTemperature());
   #endif
