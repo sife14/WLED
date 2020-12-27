@@ -7,30 +7,26 @@
 //  https://github.com/NeariX67/changeBrightness
 //  Discord: @NeariX#4799
 
-//  Modification for ESP8266 from S. Müller
+//  Modification for ESP8266 from S. M.
 //  Oktober 2020
 //  https://github.com/sife14
 //  Idea of software implemented touch from: https://www.mikrocontroller.net/topic/25045
-//  Note: The software touch function on the ESP8266 is very noisy, therefor a lot of samples are needed. 
-
-
+//  Note: The software touch function on the ESP8266 is very noisy, therefor a lot of samples are needed.
+//  As per the MIT license, I assume no liability for any damage to you or any other person or equipment. This usermod is still under testing!
+#pragma once
+#include "wled.h"
 
 //Settings for ESP8266
-#define changeBrightness false  //weather the brightness should be changable via touch, default false to avoid false detection
+#define changeBrightness false  //wether the brightness should be changable via touch, default false to avoid false detection
 float thresholdFactor=1.16;     //threshold=average of last 500 Values * thresholdFactor
                                 //increase if Wled turns detects touch when not touched
                                 //decrease if Wled doesn't recognize touch
-#define touchPinESP8266 12      //Pin used for touch sensor
 
+#define touchPinESP8266 12      //Pin used for touch sensor
 
 //Settings for ESP32
 #define thresholdESP32 1
 #define touchPinESP32 TO
-
-#pragma once
-
-#include "wled.h"
-
 
 //Define the 5 brightness levels
 //Long press to turn off / on
@@ -41,39 +37,11 @@ float thresholdFactor=1.16;     //threshold=average of last 500 Values * thresho
 #define brightness5 255
 
 
-#ifdef ESP8266
+#ifdef ESP8266 
 
 #define touchPin touchPinESP8266                    
 
-float threshold=40.0;                    
-float average=threshold;
 
-unsigned int touchRead(int touchPinLocal){ //function to replace the fuction "touchRead" from the ESP32
-    int t = 0;                             //stores the time needed to charge the sensor surface
-
-    pinMode(touchPin, OUTPUT);
-    digitalWrite(touchPin, LOW);
-    pinMode(touchPin, INPUT_PULLUP);       //start charging the sensor surface
-
-    while (digitalRead(touchPin) == 0){    //wait until the sensor surface is completely charged
-      t++;
-      if(t>1000){
-        Serial.println("touch mesurement timed out");
-        break;
-      }
-    }
-
-    if (t<threshold)                       //only update the average if not touched
-    {
-      average=(((average*5000.0)+t)/5001.0); //update the average
-      threshold=average*thresholdFactor;              //calculate the threshold from the average
-    }
-  
-    pinMode(touchPin, OUTPUT);
-    digitalWrite(touchPin, LOW);
-    
-    return t;
-}
 
 class TouchBrightnessControl : public Usermod {
   private:
@@ -84,43 +52,98 @@ class TouchBrightnessControl : public Usermod {
     unsigned int touchReading = 0;      //sensor reading
     uint16_t touchDuration = 0;         //duration of last touch
     unsigned int averageCounter=0;      //counts the taken samples for the average
-    unsigned int averageSum=0;        //sum of all samples
+    unsigned int averageSum=0;          //sum of all samples
+    unsigned int completeDischargeCounter;
+    bool dischargeComplete;
+    float threshold;                    
+    float average;
+    float thresholdBackup;
+    bool  initCompleted=false;           
 
   public:
+
+  unsigned int touchRead(int touchPinLocal){  //function to replace the fuction "touchRead" from the ESP32
+    int t = 0;                                //stores the time needed to charge the sensor surface
+    pinMode(touchPinLocal, OUTPUT);
+    digitalWrite(touchPinLocal, LOW);
+    pinMode(touchPinLocal, INPUT_PULLUP);       //start charging the sensor surface
+
+    completeDischargeCounter++;
+
+    while (digitalRead(touchPinLocal) == 0){    //wait until the sensor surface is completely charged
+      t++;
+      if(t>1000){                               //limits the maximum time to prevent the watchdog from triggering
+        Serial.println("timed out");
+        break;
+      }
+    }
+
+    if (t<threshold && initCompleted)                          //only update the average if not touched
+    {
+      average=(((average*1000.0)+t)/1001.0); //update the average
+      threshold=average*thresholdFactor;     //calculate the threshold from the average
+    }
   
+    pinMode(touchPinLocal, OUTPUT);
+    digitalWrite(touchPinLocal, LOW);
+    
+    return t;
+  }
+
+    
     void setup() {
 
-      long sum=0;
-
-      for(int x=0; x<20; x++){          //messure initial value for average
-        sum=sum+touchRead(touchPin);
-        delay(1);
+      unsigned long sum=0;
+      
+      for(int x=0; x<200; x++){          //messure initial value for average
+        int l=touchRead(touchPin);
+        sum=sum+l;
+        Serial.print("initial Messurment:  ");
+        Serial.println(l);
+        delay(10);
       }
 
-      threshold=(sum/20)*thresholdFactor; 
+      average=(sum/200.0);
+      threshold=average*thresholdFactor;
 
+
+      Serial.println(threshold);
+      Serial.println(sum);
       lastTouch = millis();
       lastRelease = millis();
       lastTime = millis();
+      thresholdBackup=threshold;
+      initCompleted=true;
     }
 
     void loop() {
 
-      if (millis()-lastTime >= 5 && averageCounter<=10){  //take 10 samples
+      if(completeDischargeCounter>1000)
+      {
+          completeDischargeCounter=0;
+          pinMode(touchPinESP8266, OUTPUT);
+          digitalWrite(touchPinESP8266, LOW);
+          delay(8);
+      }
+
+
+      else if (millis()-lastTime >= 5 && averageCounter<=15){  //take 10 samples
         averageSum=averageSum+touchRead(touchPin);
         averageCounter++;
         lastTime=millis();
+        //Serial.println(threshold);
       }
       
 
-      else if (averageCounter>10){                        //process values if 10 samples are taken
-        touchReading=averageSum/10.0;
+      else if (averageCounter>15){                        //process values if 10 samples are taken
+        touchReading=averageSum/15.0;
         averageSum=0;
         averageCounter=0;
 
         Serial.print(touchReading);
         Serial.print("  ");
         Serial.println(threshold);
+
 
         if(touchReading > threshold && released) {               //Touch started
           released = false;
@@ -135,13 +158,13 @@ class TouchBrightnessControl : public Usermod {
         
         #if changeBrightness==false
           
-          if(touchDuration >= 10 && released) {                    //Toggle power if button press is longer than 10ms
+          if(touchDuration >= 12 && released) {                    //Toggle power if button press is longer than 10ms
             touchDuration = 0;                                     //Reset touch duration to avoid multiple actions on same touch
             toggleOnOff();
             colorUpdated(NOTIFIER_CALL_MODE_DIRECT_CHANGE);
           }
           
-        }
+        
 
         #elif changeBrightness==true
 
@@ -170,8 +193,19 @@ class TouchBrightnessControl : public Usermod {
         #else
           #error Please enter true or false for changeBrightness
         #endif
+      }
 
+    }
 
+    void addToJsonInfo(JsonObject& root)
+    {
+      int reading = 20;
+      //this code adds "u":{"Light":[20," lux"]} to the info object
+      JsonObject user = root["u"];
+      if (user.isNull()) user = root.createNestedObject("u");
+      JsonArray lightArr = user.createNestedArray("Touch"); //name
+      lightArr.add(reading); //value
+      lightArr.add(" lux"); //unitd
     }
 };
 #endif
@@ -238,5 +272,7 @@ class TouchBrightnessControl : public Usermod {
         
       }
     }
+  
 };
+
 #endif
