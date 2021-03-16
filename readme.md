@@ -14,6 +14,11 @@
 
 A fast and feature-rich implementation of an ESP8266/ESP32 webserver to control NeoPixel (WS2812B, WS2811, SK6812) LEDs or also SPI based chipsets like the WS2801 and APA102!
 
+##About this fork
+This fork contains a usermod that enables touch control on an ESP8266
+
+
+
 ## ⚙️ Features
 - WS2812FX library integrated for over 100 special effects  
 - FastLED noise effects and 50 palettes  
