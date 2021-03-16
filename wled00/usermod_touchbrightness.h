@@ -18,12 +18,12 @@
 
 //Settings for ESP8266
 #define changeBrightness false  //wether the brightness should be changable via touch, default false to avoid false detection
-float thresholdFactor=1.05;     //threshold=average of last 500 Values * thresholdFactor
+float thresholdFactor=1.15;     //threshold=average of last 500 Values * thresholdFactor
                                 //increase if Wled turns detects touch when not touched
                                 //decrease if Wled doesn't recognize touch
 
 #define touchPinESP8266 12      //Pin used for touch sensor
-#define sampleCount     20      //number of samples for one touch messurement
+#define sampleCount     60      //number of samples for one touch messurement
 #define minHighSamples  1       //define the minimum count of samples above the threshold to be detected as touch
 
 //Settings for ESP32
@@ -112,7 +112,7 @@ class TouchBrightnessControl : public Usermod {
       }
 
 
-      else if (millis()-lastTime >= 5 && messurementCounter<sampleCount){  //take samples
+      else if (millis()-lastTime >= 3 && messurementCounter<sampleCount){  //take samples
         messurementSum=messurementSum+touchRead(touchPin);
         messurementCounter++;
         lastTime=millis();
