@@ -55,13 +55,13 @@ void registerUsermods()
    */
   //usermods.add(new MyExampleUsermod());
   usermods.add(new TouchBrightnessControl());
-  #ifdef USERMOD_DALLASTEMPERATURE
-  //usermods.add(new UsermodTemperature());
-  #endif
-  
-  //usermods.add(new UsermodRenameMe());
-  
-  #ifdef USERMOD_BUZZER
+
+  //usermods.add(new MyExampleUsermod());
+#ifdef USERMOD_DALLASTEMPERATURE
+  usermods.add(new UsermodTemperature());
+#endif
+//usermods.add(new UsermodRenameMe());
+#ifdef USERMOD_BUZZER
   usermods.add(new BuzzerUsermod());
   #endif
   
