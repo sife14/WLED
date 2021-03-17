@@ -9,11 +9,11 @@
 //Config:
 
 #define buttonPin 1
-#define enableInternalPullup true //enable or disable the internal pullup resisitor
+#define enableInternalPullup false //enable or disable the internal pullup resisitor
 #define defaultPinState  LOW //defines the state of the pin when the button isn't pressed
 
-#define mqttTopic "test"
-#define mqttPayload "huhu"
+#define mqttTopic "myTopic"
+#define mqttPayload "myPayload"
 
 
 class UsermodMqttSwitch: public Usermod
@@ -35,10 +35,11 @@ public:
     {
         bool inputState=digitalRead(buttonPin);
 
-        if(inputState!=defaultPinState && prevState==defaultPinState)//detect begin of button Press
+        if(inputState!=defaultPinState && prevState==defaultPinState)//detect begin of button press
         {
             publishMqtt(mqttPayload);
         }
+        
         prevState=inputState;
     }
 
