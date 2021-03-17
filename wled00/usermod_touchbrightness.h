@@ -28,7 +28,7 @@ float thresholdFactor=1.15;     //threshold=average of last 500 Values * thresho
 
 //Settings for ESP32
 #define thresholdESP32 1
-#define touchPinESP32 TO
+#define touchPinESP32 1 //change it according to your wiring
 
 //Define the 5 brightness levels
 //Long press to turn off / on
@@ -191,7 +191,7 @@ class TouchBrightnessControl : public Usermod {
 
     }
 
-    void addToJsonInfo(JsonObject& root)
+    /* void addToJsonInfo(JsonObject& root)
     {
       int reading = 20;
       //this code adds "u":{"Light":[20," lux"]} to the info object
@@ -200,7 +200,7 @@ class TouchBrightnessControl : public Usermod {
       JsonArray lightArr = user.createNestedArray("Touch"); //name
       lightArr.add(reading); //value
       lightArr.add(" lux"); //unitd
-    }
+    } */
 };
 #endif
 
