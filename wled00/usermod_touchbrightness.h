@@ -23,8 +23,9 @@ float thresholdFactor=1.15;     //threshold=average of last 500 Values * thresho
                                 //decrease if Wled doesn't recognize touch
 
 #define touchPinESP8266 12      //Pin used for touch sensor
-#define sampleCount     60      //number of samples for one touch messurement
-#define minHighSamples  1       //define the minimum count of samples above the threshold to be detected as touch
+#define sampleCount     25      //number of samples for one touch messurement
+#define minTouchDuration 10     //minimum time for a touch to be recognized 
+#define externalPullUp  true
 
 //Settings for ESP32
 #define thresholdESP32 1
@@ -32,10 +33,10 @@ float thresholdFactor=1.15;     //threshold=average of last 500 Values * thresho
 
 //Define the 5 brightness levels
 //Long press to turn off / on
-#define brightness1 51
-#define brightness2 102
-#define brightness3 153
-#define brightness4 204
+#define brightness1 3
+#define brightness2 16
+#define brightness3 40
+#define brightness4 101
 #define brightness5 255
 
 
@@ -48,8 +49,9 @@ class TouchBrightnessControl : public Usermod {
     unsigned long lastTime = 0;         //Interval
     unsigned long lastTouch = 0;        //Timestamp of last Touch
     unsigned long lastRelease = 0;      //Timestamp of last Touch release
+    unsigned long lastEffectChange=0;
     boolean released = true;            //current Touch state (touched/released)
-    unsigned int touchReading = 0;      //sensor reading
+    float touchReading = 0;      //sensor reading
     uint16_t touchDuration = 0;         //duration of last touch
     unsigned int messurementCounter=0;      //counts the taken samples for the average
     unsigned int messurementSum=0;          //sum of all samples
@@ -67,16 +69,20 @@ class TouchBrightnessControl : public Usermod {
       int t = 0;                                //stores the time needed to charge the sensor surface
       pinMode(touchPinLocal, OUTPUT);
       digitalWrite(touchPinLocal, LOW);
-      pinMode(touchPinLocal, INPUT_PULLUP);       //start charging the sensor surface
+      #if externalPullUp ==true
+        pinMode(touchPinLocal, INPUT);       //start charging the sensor surface
+      #else
+        pinMode(touchPinLocal, INPUT_PULLUP);
+      #endif
 
       completeDischargeCounter++;
 
       while (digitalRead(touchPinLocal) == 0){    //wait until the sensor surface is completely charged
         t++;
-        if(t>1000){                               //limits the maximum time to prevent the watchdog from triggering
+        /* if(t>1000){                               //limits the maximum time to prevent the watchdog from triggering
           Serial.println("timed out");
           break;
-        }
+        } */
       }
 
       pinMode(touchPinLocal, OUTPUT);
@@ -108,11 +114,11 @@ class TouchBrightnessControl : public Usermod {
           completeDischargeCounter=0;
           pinMode(touchPinESP8266, OUTPUT);
           digitalWrite(touchPinESP8266, LOW);
-          delay(8);
+          delay(1);
       }
 
 
-      else if (millis()-lastTime >= 3 && messurementCounter<sampleCount){  //take samples
+      else if (millis()-lastTime >= 1 && messurementCounter<sampleCount){  //take samples
         messurementSum=messurementSum+touchRead(touchPin);
         messurementCounter++;
         lastTime=millis();
@@ -121,9 +127,10 @@ class TouchBrightnessControl : public Usermod {
       
 
       else if (messurementCounter>=sampleCount){                        //process values if samples are taken
-        touchReading=messurementSum/sampleCount;
+        touchReading=(float)messurementSum/sampleCount;
         messurementSum=0;
         messurementCounter=0;
+       
 
         if (touchReading<threshold)                                     //only update the average if not touched
         {
@@ -152,7 +159,7 @@ class TouchBrightnessControl : public Usermod {
         
         #if changeBrightness==false
           
-          if(touchDuration >= minHighSamples*sampleCount*5 && released) {          //Toggle lamp
+          if(touchDuration >= minTouchDuration && released) {          //Toggle lamp
             touchDuration = 0;                                     
             toggleOnOff();
             colorUpdated(NOTIFIER_CALL_MODE_DIRECT_CHANGE);
@@ -162,26 +169,14 @@ class TouchBrightnessControl : public Usermod {
 
         #elif changeBrightness==true                               //not tested! use with care!
 
-          if(touchDuration >= 1000 && released) {                   //Toggle power if button press is longer than 800ms
-            touchDuration = 0;                                     //Reset touch duration to avoid multiple actions on same touch
-            toggleOnOff();
+          if(touchDuration >= 1000) {                   //Toggle power if button press is longer than 800ms
+            touchDuration = 0;                          //Reset touch duration to avoid multiple actions on same touch
+            
             colorUpdated(NOTIFIER_CALL_MODE_DIRECT_CHANGE);
           }
+
           else if(touchDuration >= 10 && released) {               //Switch to next brightness if touch is between 100 and 800ms
-            touchDuration = 0;                                     //Reset touch duration to avoid multiple actions on same touch
-            if(bri < brightness1) {
-              bri = brightness1;
-            } else if(bri >= brightness1 && bri < brightness2) {
-              bri = brightness2;
-            } else if(bri >= brightness2 && bri < brightness3) {
-              bri = brightness3;
-            } else if(bri >= brightness3 && bri < brightness4) {
-              bri = brightness4;
-            } else if(bri >= brightness4 && bri < brightness5) {
-              bri = brightness5;
-            } else if(bri >= brightness5) {
-              bri = brightness1;
-            }                                    
+            toggleOnOff();
             colorUpdated(NOTIFIER_CALL_MODE_DIRECT_CHANGE);       //Refresh values
           } 
         #else
