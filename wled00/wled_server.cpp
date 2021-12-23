@@ -15,6 +15,26 @@ bool isIp(String str) {
   return true;
 }
 
+void handleUpload(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final){
+  if (otaLock) {
+    if (final) request->send(500, "text/plain", F("Please unlock OTA in security settings!"));
+    return;
+  }
+  if(!index){
+    request->_tempFile = WLED_FS.open(filename, "w");
+    DEBUG_PRINT("Uploading ");
+    DEBUG_PRINTLN(filename);
+    if (filename == "/presets.json") presetsModifiedTime = toki.second();
+  }
+  if (len) {
+    request->_tempFile.write(data,len);
+  }
+  if(final){
+    request->_tempFile.close();
+    request->send(200, "text/plain", F("File Uploaded!"));
+  }
+}
+
 bool captivePortal(AsyncWebServerRequest *request)
 {
   if (ON_STA_FILTER(request)) return false; //only serve captive in AP mode
@@ -84,19 +104,41 @@ void initServer()
 
   AsyncCallbackJsonWebHandler* handler = new AsyncCallbackJsonWebHandler("/json", [](AsyncWebServerRequest *request) {
     bool verboseResponse = false;
+    bool isConfig = false;
     { //scope JsonDocument so it releases its buffer
-      DynamicJsonDocument jsonBuffer(JSON_BUFFER_SIZE);
-      DeserializationError error = deserializeJson(jsonBuffer, (uint8_t*)(request->_tempObject));
-      JsonObject root = jsonBuffer.as<JsonObject>();
+      #ifdef WLED_USE_DYNAMIC_JSON
+      DynamicJsonDocument doc(JSON_BUFFER_SIZE);
+      #else
+      if (!requestJSONBufferLock(14)) return;
+      #endif
+
+      DeserializationError error = deserializeJson(doc, (uint8_t*)(request->_tempObject));
+      JsonObject root = doc.as<JsonObject>();
       if (error || root.isNull()) {
-        request->send(400, "application/json", F("{\"error\":9}")); return;
+        releaseJSONBufferLock();
+        request->send(400, "application/json", F("{\"error\":9}"));
+        return;
       }
-      fileDoc = &jsonBuffer;
-      verboseResponse = deserializeState(root);
-      fileDoc = nullptr;
+      const String& url = request->url();
+      isConfig = url.indexOf("cfg") > -1;
+      if (!isConfig) {
+        #ifdef WLED_DEBUG
+          DEBUG_PRINTLN(F("Serialized HTTP"));
+          serializeJson(root,Serial);
+          DEBUG_PRINTLN();
+        #endif
+        verboseResponse = deserializeState(root);
+      } else {
+        verboseResponse = deserializeConfig(root); //use verboseResponse to determine whether cfg change should be saved immediately
+      }
+      releaseJSONBufferLock();
     }
-    if (verboseResponse) { //if JSON contains "v"
-      serveJson(request); return; 
+    if (verboseResponse) {
+      if (!isConfig) {
+        serveJson(request); return; //if JSON contains "v"
+      } else {
+        serializeConfig(); //Save new settings to FS
+      }
     } 
     request->send(200, "application/json", F("{\"success\":true}"));
   });
@@ -125,7 +167,12 @@ void initServer()
   server.on("/teapot", HTTP_GET, [](AsyncWebServerRequest *request){
     serveMessage(request, 418, F("418. I'm a teapot."), F("(Tangible Embedded Advanced Project Of Twinkling)"), 254);
     });
-    
+
+  server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {},
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data,
+                      size_t len, bool final) {handleUpload(request, filename, index, data, len, final);}
+  );
+
   //if OTA is allowed
   if (!otaLock){
     #ifdef WLED_ENABLE_FS_EDITOR
@@ -186,15 +233,15 @@ void initServer()
   }
 
 
-    #ifdef WLED_ENABLE_DMX
-    server.on("/dmxmap", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send_P(200, "text/html", PAGE_dmxmap     , dmxProcessor);
-    });
-    #else
-    server.on("/dmxmap", HTTP_GET, [](AsyncWebServerRequest *request){
-      serveMessage(request, 501, "Not implemented", F("DMX support is not enabled in this build."), 254);
-    });
-    #endif
+  #ifdef WLED_ENABLE_DMX
+  server.on("/dmxmap", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", PAGE_dmxmap     , dmxProcessor);
+  });
+  #else
+  server.on("/dmxmap", HTTP_GET, [](AsyncWebServerRequest *request){
+    serveMessage(request, 501, "Not implemented", F("DMX support is not enabled in this build."), 254);
+  });
+  #endif
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     if (captivePortal(request)) return;
     serveIndexOrWelcome(request);
@@ -213,7 +260,10 @@ void initServer()
     //make API CORS compatible
     if (request->method() == HTTP_OPTIONS)
     {
-      request->send(200); return;
+      AsyncWebServerResponse *response = request->beginResponse(200);
+      response->addHeader(F("Access-Control-Max-Age"), F("7200"));
+      request->send(response);
+      return;
     }
     
     if(handleSet(request, request->url())) return;
@@ -247,7 +297,13 @@ bool handleIfNoneMatchCacheHeader(AsyncWebServerRequest* request)
 
 void setStaticContentCacheHeaders(AsyncWebServerResponse *response)
 {
+  #ifndef WLED_DEBUG
+  //this header name is misleading, "no-cache" will not disable cache,
+  //it just revalidates on every load using the "If-None-Match" header with the last ETag value
   response->addHeader(F("Cache-Control"),"no-cache");
+  #else
+  response->addHeader(F("Cache-Control"),"no-store,max-age=0"); // prevent caching if debug build
+  #endif
   response->addHeader(F("ETag"), String(VERSION));
 }
 
@@ -261,7 +317,6 @@ void serveIndex(AsyncWebServerRequest* request)
 
   response->addHeader(F("Content-Encoding"),"gzip");
   setStaticContentCacheHeaders(response);
-  
   request->send(response);
 }
 
@@ -313,8 +368,10 @@ void serveMessage(AsyncWebServerRequest* request, uint16_t code, const String& h
 String settingsProcessor(const String& var)
 {
   if (var == "CSS") {
-    char buf[2048];
+    char buf[SETTINGS_STACK_BUF_SIZE];
+    buf[0] = 0;
     getSettingsJS(optionType, buf);
+    //Serial.println(uxTaskGetStackHighWaterMark(NULL));
     return String(buf);
   }
   
@@ -337,7 +394,7 @@ String dmxProcessor(const String& var)
       mapJS += "\nCN=" + String(DMXChannels) + ";\n";
       mapJS += "CS=" + String(DMXStart) + ";\n";
       mapJS += "CG=" + String(DMXGap) + ";\n";
-      mapJS += "LC=" + String(ledCount) + ";\n";
+      mapJS += "LC=" + String(strip.getLengthTotal()) + ";\n";
       mapJS += "var CH=[";
       for (int i=0;i<15;i++) {
         mapJS += String(DMXFixtureMap[i]) + ",";
@@ -365,6 +422,7 @@ void serveSettings(AsyncWebServerRequest* request, bool post)
     #ifdef WLED_ENABLE_DMX // include only if DMX is enabled
     else if (url.indexOf("dmx")  > 0) subPage = 7;
     #endif
+    else if (url.indexOf("um")  > 0) subPage = 8;
   } else subPage = 255; //welcome page
 
   if (subPage == 1 && wifiLock && otaLock)
@@ -386,6 +444,7 @@ void serveSettings(AsyncWebServerRequest* request, bool post)
       case 5: strcpy_P(s, PSTR("Time")); break;
       case 6: strcpy_P(s, PSTR("Security")); strcpy_P(s2, PSTR("Rebooting, please wait ~10 seconds...")); break;
       case 7: strcpy_P(s, PSTR("DMX")); break;
+      case 8: strcpy_P(s, PSTR("Usermods")); break;
     }
 
     strcat_P(s, PSTR(" settings saved."));
@@ -412,6 +471,7 @@ void serveSettings(AsyncWebServerRequest* request, bool post)
     case 5:   request->send_P(200, "text/html", PAGE_settings_time, settingsProcessor); break;
     case 6:   request->send_P(200, "text/html", PAGE_settings_sec , settingsProcessor); break;
     case 7:   request->send_P(200, "text/html", PAGE_settings_dmx , settingsProcessor); break;
+    case 8:   request->send_P(200, "text/html", PAGE_settings_um  , settingsProcessor); break;
     case 255: request->send_P(200, "text/html", PAGE_welcome); break;
     default:  request->send_P(200, "text/html", PAGE_settings     , settingsProcessor); 
   }
