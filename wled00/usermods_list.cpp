@@ -118,7 +118,7 @@ void registerUsermods()
    * \/ \/ \/
    */
   //usermods.add(new MyExampleUsermod());
-  usermods.add(new TouchBrightnessControl());
+ // usermods.add(new TouchBrightnessControl());
 
 
 

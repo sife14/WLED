@@ -162,7 +162,7 @@ class TouchBrightnessControl : public Usermod {
           if(touchDuration >= minTouchDuration && released) {          //Toggle lamp
             touchDuration = 0;                                     
             toggleOnOff();
-            colorUpdated(NOTIFIER_CALL_MODE_DIRECT_CHANGE);
+            colorUpdated(CALL_MODE_DIRECT_CHANGE );
           }
           
         
