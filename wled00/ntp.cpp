@@ -1,6 +1,6 @@
 #include "src/dependencies/timezone/Timezone.h"
 #include "wled.h"
-#include "wled_math.h"
+#include "fcn_declare.h"
 
 /*
  * Acquires time from NTP server
@@ -31,7 +31,8 @@ Timezone* tz;
 #define TZ_HAWAII              18
 #define TZ_NOVOSIBIRSK         19
 #define TZ_ANCHORAGE           20
-#define TZ_MX_CENTRAL          21  
+#define TZ_MX_CENTRAL          21
+#define TZ_PAKISTAN            22
 #define TZ_INIT               255
 
 byte tzCurrent = TZ_INIT; //uninitialized
@@ -93,12 +94,12 @@ void updateTimezone() {
       break;
     }
     case TZ_AUSTRALIA_EASTERN : {
-      tcrDaylight = {Second, Sun, Oct, 2, 660};   //AEDT = UTC + 11 hours
+      tcrDaylight = {First,  Sun, Oct, 2, 660};   //AEDT = UTC + 11 hours
       tcrStandard = {First,  Sun, Apr, 3, 600};   //AEST = UTC + 10 hours
       break;
     }
     case TZ_NEW_ZEALAND : {
-      tcrDaylight = {Second, Sun, Sep, 2, 780};   //NZDT = UTC + 13 hours
+      tcrDaylight = {Last,   Sun, Sep, 2, 780};   //NZDT = UTC + 13 hours
       tcrStandard = {First,  Sun, Apr, 3, 720};   //NZST = UTC + 12 hours
       break;
     }
@@ -143,8 +144,13 @@ void updateTimezone() {
       break;
     }
      case TZ_MX_CENTRAL : {
-      tcrDaylight = {First, Sun, Apr, 2, -300};  //CDT = UTC - 5 hours
-      tcrStandard = {Last,  Sun, Oct, 2, -360};  //CST = UTC - 6 hours
+      tcrDaylight = {First, Sun, Apr, 2, -360};  //CST = UTC - 6 hours
+      tcrStandard = tcrDaylight;
+      break;
+    }
+    case TZ_PAKISTAN : {
+      tcrDaylight = {Last, Sun, Mar, 1, 300};     //Pakistan Standard Time = UTC + 5 hours
+      tcrStandard = tcrDaylight;
       break;
     }
   }
@@ -156,7 +162,7 @@ void updateTimezone() {
 
 void handleTime() {
   handleNetworkTime();
-  
+
   toki.millisecond();
   toki.setTick();
 
@@ -169,7 +175,6 @@ void handleTime() {
     updateLocalTime();
     checkTimers();
     checkCountdown();
-    handleOverlays();
   }
 }
 
@@ -318,6 +323,32 @@ byte weekdayMondayFirst()
   return wd;
 }
 
+bool isTodayInDateRange(byte monthStart, byte dayStart, byte monthEnd, byte dayEnd)
+{
+	if (monthStart == 0 || dayStart == 0) return true;
+	if (monthEnd == 0) monthEnd = monthStart;
+	if (dayEnd == 0) dayEnd = 31;
+	byte d = day(localTime);
+	byte m = month(localTime);
+
+	if (monthStart < monthEnd) {
+		if (m > monthStart && m < monthEnd) return true;
+		if (m == monthStart) return (d >= dayStart);
+		if (m == monthEnd) return (d <= dayEnd);
+		return false;
+	}
+	if (monthEnd < monthStart) { //range spans change of year
+		if (m > monthStart || m < monthEnd) return true;
+		if (m == monthStart) return (d >= dayStart);
+		if (m == monthEnd) return (d <= dayEnd);
+		return false;
+	}
+
+	//start month and end month are the same
+	if (dayEnd < dayStart) return (m != monthStart || (d <= dayEnd || d >= dayStart)); //all year, except the designated days in this month
+	return (m == monthStart && d >= dayStart && d <= dayEnd); //just the designated days this month
+}
+
 void checkTimers()
 {
   if (lastTimerMinute != minute(localTime)) //only check once a new minute begins
@@ -331,10 +362,12 @@ void checkTimers()
     for (uint8_t i = 0; i < 8; i++)
     {
       if (timerMacro[i] != 0
-          && (timerHours[i] == hour(localTime) || timerHours[i] == 24) //if hour is set to 24, activate every hour 
-          && timerMinutes[i] == minute(localTime)
           && (timerWeekday[i] & 0x01) //timer is enabled
-          && ((timerWeekday[i] >> weekdayMondayFirst()) & 0x01)) //timer should activate at current day of week
+          && (timerHours[i] == hour(localTime) || timerHours[i] == 24) //if hour is set to 24, activate every hour
+          && timerMinutes[i] == minute(localTime)
+          && ((timerWeekday[i] >> weekdayMondayFirst()) & 0x01) //timer should activate at current day of week
+          && isTodayInDateRange(((timerMonth[i] >> 4) & 0x0F), timerDay[i], timerMonth[i] & 0x0F, timerDayEnd[i])
+         )
       {
         unloadPlaylist();
         applyPreset(timerMacro[i]);
@@ -383,24 +416,24 @@ int getSunriseUTC(int year, int month, int day, float lat, float lon, bool sunse
   float N = N1 - (N2 * N3) + day - 30;
 
   //2. convert the longitude to hour value and calculate an approximate time
-  float lngHour = lon / 15.0f;      
+  float lngHour = lon / 15.0f;
   float t = N + (((sunset ? 18 : 6) - lngHour) / 24);
-  
-  //3. calculate the Sun's mean anomaly   
+
+  //3. calculate the Sun's mean anomaly
   float M = (0.9856f * t) - 3.289f;
 
   //4. calculate the Sun's true longitude
   float L = fmod_t(M + (1.916f * sin_t(DEG_TO_RAD*M)) + (0.02f * sin_t(2*DEG_TO_RAD*M)) + 282.634f, 360.0f);
 
-  //5a. calculate the Sun's right ascension      
+  //5a. calculate the Sun's right ascension
   float RA = fmod_t(RAD_TO_DEG*atan_t(0.91764f * tan_t(DEG_TO_RAD*L)), 360.0f);
 
-  //5b. right ascension value needs to be in the same quadrant as L   
+  //5b. right ascension value needs to be in the same quadrant as L
   float Lquadrant  = floor_t( L/90) * 90;
   float RAquadrant = floor_t(RA/90) * 90;
   RA = RA + (Lquadrant - RAquadrant);
 
-  //5c. right ascension value needs to be converted into hours   
+  //5c. right ascension value needs to be converted into hours
   RA /= 15.0f;
 
   //6. calculate the Sun's declination
@@ -416,7 +449,7 @@ int getSunriseUTC(int year, int month, int day, float lat, float lon, bool sunse
   float H = sunset ? RAD_TO_DEG*acos_t(cosH) : 360 - RAD_TO_DEG*acos_t(cosH);
   H /= 15.0f;
 
-  //8. calculate local mean time of rising/setting      
+  //8. calculate local mean time of rising/setting
   float T = H + RA - (0.06571f * t) - 6.622f;
 
   //9. adjust back to UTC
@@ -439,6 +472,7 @@ void calculateSunriseAndSunset() {
     int minUTC = getSunriseUTC(year(localTime), month(localTime), day(localTime), latitude, longitude);
     if (minUTC) {
       // there is a sunrise
+      if (minUTC < 0) minUTC += 24*60; // add a day if negative
       tim_0.tm_hour = minUTC / 60;
       tim_0.tm_min = minUTC % 60;
       sunrise = tz->toLocal(mktime(&tim_0) + utcOffsetSecs);
@@ -450,6 +484,7 @@ void calculateSunriseAndSunset() {
     minUTC = getSunriseUTC(year(localTime), month(localTime), day(localTime), latitude, longitude, true);
     if (minUTC) {
       // there is a sunset
+      if (minUTC < 0) minUTC += 24*60; // add a day if negative
       tim_0.tm_hour = minUTC / 60;
       tim_0.tm_min = minUTC % 60;
       sunset = tz->toLocal(mktime(&tim_0) + utcOffsetSecs);
